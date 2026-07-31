@@ -1,0 +1,9 @@
+"""Copula based statistical arbitrage on cointegrated pairs.
+
+Pipeline: screen -> fit copula -> conditional probability signal -> backtest
+"""
+
+from . import copula, screen, signal
+
+__version__ = "0.1.0"
+__all__ = ["screen", "copula", "signal"]
