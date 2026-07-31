@@ -1,0 +1,87 @@
+"""Tests for copula fitting and selection."""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from src import copula
+
+
+@pytest.fixture
+def gaussian_pair():
+    rng = np.random.default_rng(0)
+    n = 500
+    z = rng.normal(size=n)
+    a = pd.Series(z + rng.normal(0, 0.4, n))
+    b = pd.Series(z + rng.normal(0, 0.4, n))
+    return copula.to_uniform(a), copula.to_uniform(b)
+
+
+def test_uniform_transform_is_bounded(gaussian_pair):
+    u, _ = gaussian_pair
+    assert u.min() > 0 and u.max() < 1
+
+
+def test_uniform_transform_is_approximately_uniform(gaussian_pair):
+    u, _ = gaussian_pair
+    assert u.mean() == pytest.approx(0.5, abs=0.02)
+
+
+def test_selection_rejects_asymmetric_family_on_symmetric_data(gaussian_pair):
+    """Clayton implies lower tail dependence the data does not have.
+
+    Note what is NOT asserted here. KS cannot reliably distinguish Gaussian
+    from Frank on symmetric data because both are symmetric with zero tail
+    dependence, and their KS statistics differ by less than sampling noise.
+    The meaningful property is that a family implying tail dependence the data
+    lacks gets rejected. See docs/methodology.md.
+    """
+    u, v = gaussian_pair
+    assert copula.select_best(u, v).family != "clayton"
+
+
+def test_selected_family_has_no_spurious_tail_dependence(gaussian_pair):
+    u, v = gaussian_pair
+    lower, upper = copula.tail_dependence(copula.select_best(u, v))
+    assert lower == 0.0 and upper == 0.0
+
+
+def test_clayton_is_selected_on_lower_tail_dependent_data():
+    """Generate genuine lower tail dependence and confirm Clayton wins."""
+    rng = np.random.default_rng(5)
+    n, theta = 800, 3.0
+    u = rng.uniform(size=n)
+    w = rng.uniform(size=n)
+    # Conditional inversion sampling from a Clayton copula.
+    v = np.power(
+        1 + np.power(u, -theta) * (np.power(w, -theta / (1 + theta)) - 1),
+        -1 / theta,
+    )
+    best = copula.select_best(pd.Series(u), pd.Series(v))
+    assert best.family == "clayton"
+    assert copula.tail_dependence(best)[0] > 0
+
+
+def test_conditional_probability_in_unit_interval(gaussian_pair):
+    u, v = gaussian_pair
+    fitted = copula.select_best(u, v)
+    p = fitted.conditional_u_given_v(u.values, v.values)
+    assert p.min() >= 0.0 and p.max() <= 1.0
+
+
+def test_clayton_has_lower_tail_dependence():
+    fitted = copula.FittedCopula("clayton", theta=2.0, ks_stat=0.0)
+    lower, upper = copula.tail_dependence(fitted)
+    assert lower > 0 and upper == 0
+
+
+def test_gumbel_has_upper_tail_dependence():
+    fitted = copula.FittedCopula("gumbel", theta=2.0, ks_stat=0.0)
+    lower, upper = copula.tail_dependence(fitted)
+    assert upper > 0 and lower == 0
+
+
+def test_independence_copula_is_product():
+    u = np.array([0.3, 0.5, 0.7])
+    v = np.array([0.4, 0.6, 0.8])
+    assert np.allclose(copula._clayton_cdf(u, v, 0.0), u * v)
