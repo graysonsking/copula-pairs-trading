@@ -1,0 +1,65 @@
+"""Copula based pair trading.
+
+Pairs are screened on a formation window and traded on the following window.
+Refitting the copula every rebalance would be expensive and would also make
+the model chase noise, so the fit is held for the trading window.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+from src import copula, signal
+from src.screen import Pair
+
+ENTRY_LOW = 0.05
+ENTRY_HIGH = 0.95
+
+
+def weights_fn(
+    returns: pd.DataFrame,
+    date: pd.Timestamp,
+    pairs: list[Pair] | None = None,
+    state: dict | None = None,
+    **kwargs,
+) -> pd.Series:
+    """Target weights across all active pairs.
+
+    pairs: pre-screened pairs from the formation window. Screening inside the
+        rebalance loop is prohibitively slow on a 100 name universe.
+    state: mutable dict carrying open positions between rebalances so exits
+        respect the hysteresis band.
+    """
+    if not pairs:
+        return pd.Series(0.0, index=returns.columns)
+
+    state = state if state is not None else {}
+    open_positions = []
+
+    for pair in pairs:
+        if pair.a not in returns.columns or pair.b not in returns.columns:
+            continue
+
+        ra, rb = returns[pair.a].dropna(), returns[pair.b].dropna()
+        if len(ra) < 60 or len(rb) < 60:
+            continue
+
+        probs = signal.conditional_probabilities(ra, rb)
+        latest = float(probs.iloc[-1])
+
+        key = (pair.a, pair.b)
+        current = state.get(key, 0)
+        target = signal.signal_state(
+            latest,
+            current,
+            entry_low=kwargs.get("entry_low", ENTRY_LOW),
+            entry_high=kwargs.get("entry_high", ENTRY_HIGH),
+        )
+        state[key] = target
+
+        if target != 0:
+            open_positions.append(
+                signal.PairPosition(pair.a, pair.b, target, pair.hedge_ratio, date)
+            )
+
+    return signal.positions_to_weights(open_positions, returns.columns)
