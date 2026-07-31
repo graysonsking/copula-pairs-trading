@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/30569228/README.md)
 # Copula Pairs Trading
 
 Statistical arbitrage on S&P 100 pairs. Pairs are selected with Johansen cointegration testing, and entry and exit rules are driven by a fitted copula rather than a linear spread Z-score.
